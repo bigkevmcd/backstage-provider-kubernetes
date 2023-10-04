@@ -8,8 +8,8 @@ import {
   ClusterDetails,
   KubernetesAuthTranslatorGenerator,
   KubernetesFetcher,
-} from "@backstage/plugin-kubernetes-backend"
-import { KubernetesEntityProviderConfig, readProviderConfigs } from "./KubernetesEntityProviderConfig"
+} from '@backstage/plugin-kubernetes-backend'
+import { KubernetesEntityProviderConfig, readProviderConfigs } from './KubernetesEntityProviderConfig'
 import { Logger } from 'winston';
 import { Config } from '@backstage/config';
 import {
@@ -23,11 +23,20 @@ type KubernetesEnvironment = {
   config: Config;
 };
 
+const defaultEntityTransformer = (resource: any, resourceType: string, entity: DeferredEntity): DeferredEntity => entity;
+
+export type KubernetesEntityTransformer = (
+  resource: any,
+  resourceType: string,
+  entity: DeferredEntity
+) => DeferredEntity;
+
 export class KubernetesEntityProvider implements EntityProvider {
   private readonly clusterDetails: ClusterDetails;
   private readonly providerConfig: KubernetesEntityProviderConfig
   private readonly scheduleFn: () => Promise<void>;
-  private readonly fetcher: KubernetesFetcher
+  private readonly fetcher: KubernetesFetcher;
+  private readonly entityTransformer: KubernetesEntityTransformer;
 
   private readonly logger: winston.Logger
 
@@ -39,6 +48,7 @@ export class KubernetesEntityProvider implements EntityProvider {
       logger: winston.Logger;
       schedule?: TaskRunner;
       scheduler?: PluginTaskScheduler;
+      entityTransformer: KubernetesEntityTransformer;
     },
   ): Promise<KubernetesEntityProvider[]> {
     // @ts-ignore
@@ -65,6 +75,7 @@ export class KubernetesEntityProvider implements EntityProvider {
         taskRunner,
         options.logger,
         fetcher,
+        options.entityTransformer,
       )
     })
   }
@@ -75,6 +86,7 @@ export class KubernetesEntityProvider implements EntityProvider {
     taskRunner: TaskRunner,
     logger: winston.Logger,
     fetcher: KubernetesFetcher,
+    entityTransformer?: KubernetesEntityTransformer
   ) {
     this.clusterDetails = clusterDetails
     this.providerConfig = providerConfig
@@ -82,8 +94,8 @@ export class KubernetesEntityProvider implements EntityProvider {
       target: this.getProviderName(),
     });
     this.scheduleFn = this.createScheduleFn(taskRunner);
-    this.fetcher = fetcher
-
+    this.fetcher = fetcher;
+    this.entityTransformer = entityTransformer || defaultEntityTransformer;
   }
 
   getProviderName(): string {
@@ -137,7 +149,7 @@ export class KubernetesEntityProvider implements EntityProvider {
       this.logger.error(`Failed to fetch objects from cluster`, error)
     })
     const entities = results.responses.map(({ resources, type }) => (
-      resources.map((resource) => this.toEntity(resource, type))
+      resources.map((resource) => this.entityTransformer(resources, type, this.toEntity(resource, type)))
     )).flat()
 
     await this.connection.applyMutation({
@@ -183,5 +195,4 @@ export class KubernetesEntityProvider implements EntityProvider {
 
     return await translator.decorateClusterDetailsWithAuth(this.clusterDetails, {})
   }
-
 }
